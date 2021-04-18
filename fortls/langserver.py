@@ -728,6 +728,15 @@ class LangServer:
                 if obj.name.lower() == key:
                     return obj
         else:
+            # If we've found the implicit variable for the return
+            # value of a function, return the function as the
+            # definition, instead of the variable.
+            if var_obj.get_type() == VAR_TYPE_ID:
+                parent_scope = var_obj.parent
+                if parent_scope is not None and parent_scope.get_type() == FUNCTION_TYPE_ID:
+                    if parent_scope.name == var_obj.name:
+                        var_obj = parent_scope
+
             return var_obj
         return None
 
@@ -772,7 +781,7 @@ class LangServer:
             sub_name, arg_strings, sub_end = get_sub_name(line_prefix)
             var_stack = get_var_stack(sub_name)
             is_member = (len(var_stack) > 1)
-        except:
+        except Exception:
             return None
         #
         curr_scope = file_obj.ast.get_inner_scope(sig_line+1)
@@ -836,6 +845,42 @@ class LangServer:
         return req_dict
 
     def get_all_references(self, def_obj, type_mem, file_obj=None):
+        """Return all references to an object. When the object is a module
+procedure, return references to both the parent declaration and
+submodule definition.
+
+        """
+        refs = {}
+        ref_objs = []
+        direct_refs = self.get_all_direct_references(def_obj, type_mem, file_obj)
+        has_values = False
+        if direct_refs is not None:
+            refs.update(direct_refs[0])
+            ref_objs.extend(direct_refs[1])
+            has_values = True
+        if def_obj.get_type() in [SUBROUTINE_TYPE_ID, FUNCTION_TYPE_ID]:
+            linked_obj = def_obj.decl_impl_link
+            if linked_obj is not None:
+                indirect_refs = self.get_all_direct_references(linked_obj, type_mem, file_obj)
+                if indirect_refs is not None:
+                    for filename, fref in indirect_refs[0].items():
+                        refs[filename] = refs.get(filename, [])
+                        refs[filename].extend(fref)
+                        refs[filename].sort()
+                    ref_objs.extend(indirect_refs[1])
+                    has_values = True
+        if has_values:
+            return refs, ref_objs
+        return None
+
+    def get_all_direct_references(self, def_obj, type_mem, file_obj=None):
+        """Return all references to a particular object.
+
+:param file_obj: optional specific file to search in. When not
+specified, the entire workspace is searched.
+:type file_obj: fortran_file
+:returns: a 2-tuple of ({filename: List[ [line_number, beginning, end] ]}, and list of reference objects)
+        """
         # Search through all files
         def_name = def_obj.name.lower()
         def_fqsn = def_obj.FQSN
@@ -935,20 +980,32 @@ class LangServer:
         var_obj = self.get_definition(file_obj, def_line, def_char)
         if var_obj is None:
             return None
-        # Construct link reference
-        if var_obj.file_ast.file is not None:
-            var_file = var_obj.file_ast.file
-            sline, schar, echar = \
-                var_file.find_word_in_code_line(var_obj.sline-1, var_obj.name)
-            if schar < 0:
-                schar = echar = 0
-            return {
-                "uri": path_to_uri(var_file.path),
-                "range": {
-                    "start": {"line": sline, "character": schar},
-                    "end": {"line": sline, "character": echar}
-                }
+
+        span = var_obj.get_definition_span()
+        if span is None:
+            return None
+
+        # In the special case of module procedures, we want to
+        # serve definition to swap between the declaration in the
+        # parent (sub)module and the definition in the submodule
+        # when we're already pointing to one of them.
+        if def_line == span[0] and span[1] <= def_char < span[2]:
+            if var_obj.get_type() in [FUNCTION_TYPE_ID, SUBROUTINE_TYPE_ID] and var_obj.decl_impl_link is not None:
+                toggle_obj = var_obj.decl_impl_link
+                toggle_span = toggle_obj.get_definition_span()
+                if toggle_span is not None:
+                    var_obj = toggle_obj
+                    span = toggle_span
+
+        sline, schar, echar = span
+
+        return {
+            "uri": path_to_uri(var_obj.file_ast.file.path),
+            "range": {
+                "start": {"line": sline, "character": schar},
+                "end": {"line": sline, "character": echar}
             }
+        }
         return None
 
     def serve_hover(self, request):

@@ -403,13 +403,17 @@ class fortran_diagnostic:
 
 # Fortran object classes
 class fortran_obj:
+    """Base class for all fortran object."""
     def __init__(self):
         self.vis = 0
         self.def_vis = 0
         self.doc_str = None
         self.parent = None
+        self.file_ast = None
+        self.sline = -1
         self.eline = -1
         self.implicit_vars = None
+        self.name = None
 
     def set_default_vis(self, new_vis):
         self.def_vis = new_vis
@@ -510,6 +514,18 @@ class fortran_obj:
     def check_definition(self, obj_tree, known_types={}, interface=False):
         return None, known_types
 
+    def get_definition_span(self):
+        """Return the span of the definition of this object as (sline, schar,
+        echar) tuple. Returns None if the file doesn't exist. Returns
+        schar = echar = 0 if the name cannot be found on the objects
+        declared start line.
+        """
+        if self.file_ast is None or self.file_ast.file is None:
+            return None
+        sline, schar, echar = self.file_ast.file.find_word_in_code_line(self.sline - 1, self.name)
+        if schar < 0:
+            schar = echar = 0
+        return (sline, schar, echar)
 
 class fortran_scope(fortran_obj):
     def __init__(self, file_ast, line_number, name):
@@ -802,6 +818,12 @@ class fortran_submodule(fortran_module):
                         elif prototype.get_type() == FUNCTION_TYPE_ID:
                             child = fortran_function(child_old.file_ast, child_old.sline, child_old.name)
                         child.copy_from(child_old)
+
+                        # link the new procedure and old procedure to each other
+                        if child is not prototype:
+                            child.decl_impl_link = prototype
+                            prototype.decl_impl_link = child
+
                         # Replace in child and scope lists
                         self.children[i] = child
                         for (j, file_scope) in enumerate(child.file_ast.scope_list):
@@ -810,6 +832,10 @@ class fortran_submodule(fortran_module):
                     if child.get_type() == prototype.get_type():
                         prototype.resolve_link(obj_tree)
                         child.copy_interface(prototype)
+
+                        if child is not prototype:
+                            child.decl_impl_link = prototype
+                            prototype.decl_impl_link = child
                         break
 
     def require_link(self):
@@ -825,6 +851,11 @@ class fortran_subroutine(fortran_scope):
         self.in_children = []
         self.missing_args = []
         self.mod_scope = mod_flag
+
+        # If mod_scope is true, this will eventually become a link
+        # between the implementation and the declaration. The two will
+        # point to each other.
+        self.decl_impl_link = None
 
     def is_mod_scope(self):
         return self.mod_scope
@@ -1020,6 +1051,7 @@ class fortran_function(fortran_subroutine):
         self.mod_scope = mod_flag
         self.result_var = result_var
         self.result_obj = None
+        self.decl_impl_link = None
         if return_type is not None:
             self.return_type = return_type[0]
         else:
