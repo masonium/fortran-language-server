@@ -1651,6 +1651,7 @@ class fortran_meth(fortran_var):
                         keyword_info, link_obj)
         self.drop_arg = -1
         self.pass_name = keyword_info.get('pass')
+        self.decl_impl_link = None
         if link_obj is None:
             self.link_name = get_paren_substring(var_desc.lower())
 
