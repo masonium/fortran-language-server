@@ -42,3 +42,14 @@ contains
     test = is_point_equal(a,b)
   end module procedure is_point_equal_sub
 end submodule points_a
+
+module use_submod
+  use points
+contains
+  subroutine calc_point_dist(a, b, res)
+    type(point), intent(in) :: a, b
+    real, intent(out) :: res
+
+    res = point_dist(a, b)
+  end subroutine calc_point_dist
+end module use_submod

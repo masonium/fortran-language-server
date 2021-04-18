@@ -305,7 +305,7 @@ def parse_var_keywords(test_str):
     return keywords, test_str
 
 
-def read_var_def(line, type_word=None, fun_only=False):
+def read_var_def(line, type_word=None, mod_flag=False, fun_only=False):
     """Attempt to read variable definition line"""
     if type_word is None:
         type_match = NAT_VAR_REGEX.match(line)
@@ -344,7 +344,7 @@ def read_var_def(line, type_word=None, fun_only=False):
     #
     keywords, trailing_line = parse_var_keywords(trailing_line)
     # Check if function
-    fun_def = read_fun_def(trailing_line, [type_word, keywords])
+    fun_def = read_fun_def(trailing_line, [type_word, keywords], mod_flag=mod_flag)
     if (fun_def is not None) or fun_only:
         return fun_def
     #
@@ -375,7 +375,7 @@ def read_fun_def(line, return_type=None, mod_flag=False):
         keywords.append(mod_match.group(1))
         mod_match = SUB_MOD_REGEX.match(line)
     if mods_found:
-        tmp_var = read_var_def(line, fun_only=True)
+        tmp_var = read_var_def(line, mod_flag=mod_flag, fun_only=True)
         if tmp_var is not None:
             return tmp_var
     fun_match = FUN_REGEX.match(line)
@@ -396,11 +396,14 @@ def read_fun_def(line, return_type=None, mod_flag=False):
         trailing_line = trailing_line[paren_match.end(0):]
     #
     return_var = None
-    if return_type is None:
-        trailing_line = trailing_line.strip()
-        results_match = RESULT_REGEX.match(trailing_line)
-        if results_match is not None:
-            return_var = results_match.group(1).strip().lower()
+
+    # look for a return variable, regardless of whether a return type
+    # is specified
+    trailing_line = trailing_line.strip()
+    results_match = RESULT_REGEX.match(trailing_line)
+    if results_match is not None:
+        return_var = results_match.group(1).strip().lower()
+
     return 'fun', FUN_info(name, args, return_type, return_var, mod_flag, keywords)
 
 
@@ -608,7 +611,7 @@ def read_mod_def(line):
         sub_res = read_sub_def(trailing_line, mod_flag=True)
         if sub_res is not None:
             return sub_res
-        fun_res = read_var_def(trailing_line, fun_only=True)
+        fun_res = read_var_def(trailing_line, mod_flag=True, fun_only=True)
         if fun_res is not None:
             return fun_res[0], fun_res[1]._replace(mod_flag=True)
         fun_res = read_fun_def(trailing_line, mod_flag=True)
@@ -1570,8 +1573,9 @@ def process_file(file_obj, close_open_scopes, debug=False, pp_defs={}, include_d
                 file_ast.add_scope(new_fun, END_FUN_REGEX)
                 if obj_info.return_type is not None:
                     keywords, keyword_info = map_keywords(obj_info.return_type[1])
-                    new_obj = fortran_var(file_ast, line_number, obj_info.name,
-                                          obj_info.return_type[0], keywords, keyword_info)
+                    var_name = obj_info.return_var or obj_info.name
+                    new_obj = fortran_var(file_ast, line_number, var_name,
+                                          obj_info. return_type[0], keywords, keyword_info)
                     file_ast.add_variable(new_obj)
                 if(debug):
                     print('{1} !!! FUNCTION statement({0})'.format(line_number, line.strip()))
